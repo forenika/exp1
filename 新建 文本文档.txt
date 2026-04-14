@@ -1,0 +1,126 @@
+extends Camera2D
+
+@export var target: Node2D  # 跟随的目标（玩家）
+@export var smoothing: float = 0.1  # 平滑跟随速度
+@export var camera_y_offset: float = 0  # Y轴偏移量
+
+var limits_set = false
+
+func _ready():
+	# 等待一帧，确保所有节点都加载完成
+	await get_tree().process_frame
+	
+	# 自动设置相机边界
+	setup_camera_limits()
+
+func setup_camera_limits():
+	# 查找所有 TileMapLayer
+	var all_layers = find_all_tilemap_layers()
+	
+	if all_layers.size() == 0:
+		print("警告: 未找到任何 TileMapLayer，相机将无边界限制")
+		return
+	
+	print("找到 ", all_layers.size(), " 个 TileMapLayer")
+	
+	# 初始化边界
+	var total_left = INF
+	var total_right = -INF
+	var total_top = INF
+	var total_bottom = -INF
+	
+	# 遍历所有 TileMapLayer，计算总边界
+	for layer in all_layers:
+		var used_rect = layer.get_used_rect()
+		
+		# 如果没有瓦片，跳过
+		if used_rect.size.x == 0 or used_rect.size.y == 0:
+			print("图层 ", layer.name, " 是空的，跳过")
+			continue
+		
+		var tile_size = layer.tile_set.tile_size
+		var map_position = layer.global_position
+		
+		# 计算该图层的边界
+		var layer_left = used_rect.position.x * tile_size.x + map_position.x
+		var layer_right = used_rect.end.x * tile_size.x + map_position.x
+		var layer_top = used_rect.position.y * tile_size.y + map_position.y
+		var layer_bottom = used_rect.end.y * tile_size.y + map_position.y
+		
+		# 更新总边界
+		total_left = min(total_left, layer_left)
+		total_right = max(total_right, layer_right)
+		total_top = min(total_top, layer_top)
+		total_bottom = max(total_bottom, layer_bottom)
+		
+		print("图层 ", layer.name, " 边界: 左=", layer_left, " 右=", layer_right, " 上=", layer_top, " 下=", layer_bottom)
+	
+	# 设置相机限制
+	if total_left != INF:
+		limit_left = total_left
+		limit_right = total_right
+		limit_top = total_top
+		limit_bottom = total_bottom
+		limit_smoothed = true
+		limits_set = true
+		
+		print("=== 相机边界设置成功 ===")
+		print("总左边界: ", limit_left)
+		print("总右边界: ", limit_right)
+		print("总上边界: ", limit_top)
+		print("总下边界: ", limit_bottom)
+		print("地图宽度: ", limit_right - limit_left)
+		print("地图高度: ", limit_bottom - limit_top)
+	else:
+		print("所有 TileMapLayer 都是空的，相机将无边界限制")
+
+# 递归查找所有 TileMapLayer
+func find_all_tilemap_layers():
+	var layers: Array[TileMapLayer] = []
+	var root = get_tree().current_scene
+	find_tilemap_layers_recursive(root, layers)
+	return layers
+
+func find_tilemap_layers_recursive(node, layers: Array):
+	if node is TileMapLayer:
+		layers.append(node)
+	
+	for child in node.get_children():
+		find_tilemap_layers_recursive(child, layers)
+
+func _physics_process(delta: float) -> void:
+	if not target:
+		return
+	
+	# 计算目标位置
+	var target_position = Vector2(target.global_position.x, target.global_position.y + camera_y_offset)
+	
+	# 应用边界限制
+	if limits_set:
+		var viewport_size = get_viewport_rect().size
+		var half_width = (viewport_size.x / 2) * zoom.x
+		var half_height = (viewport_size.y / 2) * zoom.y
+		
+		# 限制相机位置，使其不超出边界
+		target_position.x = clamp(target_position.x, 
+			limit_left + half_width, 
+			limit_right - half_width)
+		
+		target_position.y = clamp(target_position.y, 
+			limit_top + half_height, 
+			limit_bottom - half_height)
+	
+	# 平滑跟随
+	global_position = global_position.lerp(target_position, 1.0 - exp(-delta / smoothing))
+
+# 可选：获取地图总边界的函数
+func get_map_bounds():
+	if limits_set:
+		return {
+			"left": limit_left,
+			"right": limit_right,
+			"top": limit_top,
+			"bottom": limit_bottom
+		}
+	else:
+		return null
